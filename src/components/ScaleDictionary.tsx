@@ -553,12 +553,6 @@ function getFormulaFromIntervals(intervals: number[], scaleName: string): string
     .join(" – ");
 }
 
-/**
- * Asigna los dedos de la mano izquierda en una cuerda.
- * Si la cuerda tiene 2 notas separadas por 2 trastes (ej. Fa en traste 3 y Sol en traste 5 de la 4ª cuerda)
- * y la siguiente cuerda (3ª cuerda) requiere abrir el Dedo 1 un traste hacia atrás (traste 2 = La),
- * asigna automáticamente Dedo 1 (Fa) y Dedo 4 (Sol) en la 4ª cuerda para facilitar el cambio de cuerda.
- */
 function assignUniqueFingersOnString(
   notesOnStr: HorizontalNoteDot[],
   baseFret: number,
@@ -593,11 +587,9 @@ function assignUniqueFingersOnString(
       f1 = "2";
       f2 = "4";
     } else if (span1 >= 2 && span2 === 1) {
-      // Ej. 3ª cuerda: La (traste 2) = Dedo 1, Si (traste 4) = Dedo 3, Do (traste 5) = Dedo 4
       f1 = "3";
       f2 = "4";
     } else if (span1 === 1 && span2 >= 2) {
-      // Ej. 3ª cuerda: La (traste 2) = Dedo 1, Sib (traste 3) = Dedo 2, Do (traste 5) = Dedo 4
       f1 = "2";
       f2 = "4";
     } else {
@@ -626,8 +618,6 @@ function assignUniqueFingersOnString(
       if (span === 1) {
         f1 = "2";
       } else if (span === 2) {
-        // Si la 3ª cuerda retrocede al traste baseFret - 1 (ej. La en traste 2),
-        // en la 4ª cuerda Fa (traste 3) va con Dedo 1 y Sol (traste 5) va con Dedo 4
         f1 = nextStringShiftsBackOneFret ? "4" : "3";
       } else {
         f1 = "4";
@@ -741,10 +731,6 @@ function buildRootAnchoredRoundTrip(
   return result;
 }
 
-/**
- * Construye cada posición evitando estiramientos de 5 trastes en la 4ª cuerda (ej. traste 7 en Posición 1)
- * cuando la nota está disponible en la 3ª cuerda en `baseFret - 1` (ej. La en 3ª cuerda traste 2 con Dedo 1).
- */
 function buildCleanStudioPosition(
   posId: number,
   baseFret: number,
@@ -770,8 +756,6 @@ function buildCleanStudioPosition(
   const stringNotesMap = new Map<number, HorizontalNoteDot[]>();
 
   for (let s = 6; s >= 1; s--) {
-    // En la 3ª cuerda (Sol), permitir desde el inicio que tome baseFret - 1 (ej. traste 2 en Posición 1 de Do)
-    // porque entre la 3ª y 2ª cuerda hay una 3ª mayor y es la postura natural de guitarra sin abrir la mano en la 4ª cuerda.
     const minFretForStr =
       !isArpeggioOrTriad && !isPentatonicFive && s === 3
         ? Math.max(1, baseFret - 1)
@@ -827,8 +811,6 @@ function buildCleanStudioPosition(
     const firstUpper = upper[0];
 
     if (lastLower.midi === firstUpper.midi) {
-      // Si hay nota duplicada entre la 4ª y la 3ª cuerda, preferir dejarla en la 3ª cuerda con Dedo 1
-      // antes que estirar el meñique en la 4ª cuerda
       if (s === 4 && lastLower.fret >= baseFret + 3) {
         lower.pop();
         stringNotesMap.set(s, lower);
@@ -876,8 +858,6 @@ function buildCleanStudioPosition(
     );
 
     if (candidates.length > 0) {
-      // Priorizar siempre la cuerda donde el traste sea baseFret - 1 con Dedo 1 (ej. 3ª cuerda traste 2 = La)
-      // en vez de estirar hasta baseFret + 4 (traste 7) en la cuerda anterior (4ª cuerda)
       const best = [...candidates].sort((a, b) => {
         const aIsStretchPlus4 = a.fret >= baseFret + 4 ? 1 : 0;
         const bIsStretchPlus4 = b.fret >= baseFret + 4 ? 1 : 0;
@@ -1114,6 +1094,7 @@ export default function ScaleDictionary() {
   const [isPlayingSequence, setIsPlayingSequence] = useState<boolean>(false);
 
   const timersRef = useRef<number[]>([]);
+  const fretboardScrollRef = useRef<HTMLDivElement | null>(null);
 
   const roots: RootNote[] = [
     "C",
@@ -1478,6 +1459,91 @@ export default function ScaleDictionary() {
     return list;
   }, [showOpenStringColumn]);
 
+  const focusActivePositionOnFretboard = useCallback(() => {
+    const container = fretboardScrollRef.current;
+    if (!container) return;
+
+    const scrollDiff = container.scrollWidth - container.clientWidth;
+    if (scrollDiff <= 4) return;
+
+    let minFretToFocus = 1;
+    let maxFretToFocus = 5;
+
+    if (trainerMode === "spider_exercise") {
+      minFretToFocus = currentSpiderWindowBaseFret;
+      maxFretToFocus = currentSpiderWindowBaseFret + 3;
+    } else {
+      if (activePositionBox.id === 0) {
+        container.scrollTo({ left: 0, behavior: "smooth" });
+        return;
+      }
+      minFretToFocus = activePositionBox.minFret;
+      maxFretToFocus = activePositionBox.maxFret;
+    }
+
+    if (minFretToFocus <= 1) {
+      container.scrollTo({ left: 0, behavior: "smooth" });
+      return;
+    }
+
+    const stickyColPx = 46;
+    const openColPx = showOpenStringColumn ? 44 : 0;
+    const fretsTrackPx = Math.max(
+      1,
+      container.scrollWidth - stickyColPx - openColPx
+    );
+    const fretWidthPx = fretsTrackPx / MAX_FRET;
+
+    const boxStartPx =
+      openColPx + Math.max(0, minFretToFocus - 1.35) * fretWidthPx;
+    const boxEndPx =
+      openColPx + Math.min(MAX_FRET, maxFretToFocus + 0.35) * fretWidthPx;
+    const boxSpanPx = boxEndPx - boxStartPx;
+
+    const visibleViewportRightOfSticky = Math.max(
+      120,
+      container.clientWidth - stickyColPx
+    );
+
+    let desiredScrollLeft: number;
+    if (boxSpanPx <= visibleViewportRightOfSticky) {
+      const extraSpace = visibleViewportRightOfSticky - boxSpanPx;
+      desiredScrollLeft = boxStartPx - extraSpace * 0.35;
+    } else {
+      desiredScrollLeft = boxStartPx;
+    }
+
+    const targetLeft = Math.max(0, Math.min(scrollDiff, desiredScrollLeft));
+    container.scrollTo({ left: targetLeft, behavior: "smooth" });
+  }, [
+    activePositionBox,
+    trainerMode,
+    currentSpiderWindowBaseFret,
+    showOpenStringColumn,
+  ]);
+
+  useEffect(() => {
+    focusActivePositionOnFretboard();
+  }, [
+    focusActivePositionOnFretboard,
+    selectedPositionId,
+    selectedRoot,
+    selectedScaleName,
+  ]);
+
+  // Al rotar el teléfono (cambio de orientación/tamaño), re-enfocar automáticamente la posición activa
+  useEffect(() => {
+    const handleResizeOrRotate = () => {
+      focusActivePositionOnFretboard();
+    };
+    window.addEventListener("resize", handleResizeOrRotate);
+    window.addEventListener("orientationchange", handleResizeOrRotate);
+    return () => {
+      window.removeEventListener("resize", handleResizeOrRotate);
+      window.removeEventListener("orientationchange", handleResizeOrRotate);
+    };
+  }, [focusActivePositionOnFretboard]);
+
   const handlePlaySingleDot = (
     dot: HorizontalNoteDot,
     instToUse: GuitarInstrumentId = selectedInstrument
@@ -1737,11 +1803,11 @@ export default function ScaleDictionary() {
   return (
     <div
       id="scale-dictionary-container"
-      className="grid grid-cols-1 lg:grid-cols-12 gap-5 w-full select-none items-start"
+      className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 w-full pb-4 select-none items-start"
     >
       {/* COLUMNA IZQUIERDA */}
-      <div className="lg:col-span-4 flex flex-col gap-4 min-w-0">
-        <div className="bg-[#111217] p-4 rounded-2xl border border-[#1e202b] shadow-xl">
+      <div className="lg:col-span-4 flex flex-col gap-3.5 sm:gap-4 min-w-0">
+        <div className="bg-[#111217] p-3.5 sm:p-4 rounded-2xl border border-[#1e202b] shadow-xl">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-extrabold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
               <Music size={14} className="text-[#f25100]" />
@@ -1752,7 +1818,7 @@ export default function ScaleDictionary() {
             </span>
           </div>
 
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-4 gap-2">
             {roots.map((root) => {
               const isSelected = selectedRoot === root;
               return (
@@ -1779,12 +1845,12 @@ export default function ScaleDictionary() {
           </div>
         </div>
 
-        <div className="bg-[#111217] p-4 rounded-2xl border border-[#1e202b] shadow-xl flex flex-col gap-3">
-          <div className="flex items-center justify-between">
+        <div className="bg-[#111217] p-3.5 sm:p-4 rounded-2xl border border-[#1e202b] shadow-xl flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-extrabold uppercase tracking-wider text-zinc-400">
               {isEs ? "ESCALA / ARPEGIO A EXPLORAR" : "SCALE / ARPEGGIO"}
             </span>
-            <span className="text-[10px] font-mono text-[#f25100] font-bold">
+            <span className="text-[10px] font-mono text-[#f25100] font-bold shrink-0">
               {isEs ? "4 Posiciones Completas" : "4 Complete Positions"}
             </span>
           </div>
@@ -1808,7 +1874,7 @@ export default function ScaleDictionary() {
           </div>
 
           {!searchQuery && (
-            <div className="flex flex-wrap gap-1.5 pb-2 border-b border-[#1c1e28]">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap gap-1.5 pb-2 border-b border-[#1c1e28]">
               {EXPLORER_CATEGORIES.map((group) => {
                 const isCatActive = activeCategory === group.category;
                 const shortLbl = CATEGORY_SHORT_LABELS[group.category];
@@ -1818,7 +1884,7 @@ export default function ScaleDictionary() {
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setActiveCategory(group.category)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-colors cursor-pointer ${
+                    className={`px-2.5 py-1.5 lg:py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-colors cursor-pointer text-center truncate ${
                       isCatActive
                         ? "bg-[#f25100] text-white"
                         : "bg-[#161720] text-zinc-400 hover:text-white border border-[#242634]"
@@ -1835,7 +1901,7 @@ export default function ScaleDictionary() {
             </div>
           )}
 
-          <div className="flex flex-col gap-2 max-h-[390px] overflow-y-auto pr-1">
+          <div className="flex flex-col gap-2 max-h-[240px] sm:max-h-[260px] lg:max-h-[390px] overflow-y-auto pr-1">
             {EXPLORER_CATEGORIES.map((group) => {
               if (!searchQuery && group.category !== activeCategory) return null;
 
@@ -1872,17 +1938,17 @@ export default function ScaleDictionary() {
                             setTrainerMode("scale_playalong");
                           }
                         }}
-                        className={`w-full px-3.5 py-2.5 rounded-xl border text-left transition-colors cursor-pointer flex items-center justify-between gap-2 ${
+                        className={`w-full px-3 sm:px-3.5 py-2.5 rounded-xl border text-left transition-colors cursor-pointer flex items-center justify-between gap-2 ${
                           isSelected
                             ? "bg-[#f25100] text-white border-[#ff7433] shadow-[0_0_12px_rgba(242,81,0,0.3)]"
                             : "bg-[#161720] text-zinc-200 border-[#232533] hover:border-[#f25100]/50 hover:bg-[#1b1d28]"
                         }`}
                       >
-                        <span className="text-sm font-bold truncate">
+                        <span className="text-xs sm:text-sm font-bold truncate">
                           {sc.name}
                         </span>
                         <span
-                          className={`text-[10px] font-mono shrink-0 ${
+                          className={`text-[9.5px] sm:text-[10px] font-mono shrink-0 ${
                             isSelected
                               ? "text-orange-100 font-bold"
                               : "text-zinc-500"
@@ -1902,14 +1968,14 @@ export default function ScaleDictionary() {
 
       {/* COLUMNA DERECHA */}
       <div className="lg:col-span-8 flex flex-col gap-3.5 min-w-0">
-        <div className="bg-[#111217] p-4 sm:p-5 rounded-2xl border border-[#1e202b] shadow-2xl flex flex-col gap-3.5 overflow-hidden">
-          {/* 1. CABECERA SUPERIOR */}
+        <div className="bg-[#111217] p-3.5 sm:p-5 rounded-2xl border border-[#1e202b] shadow-2xl flex flex-col gap-3.5 overflow-hidden">
+          {/* 1. CABECERA SUPERIOR Y BOTONERAS ALINEADAS EN MÓVIL VERTICAL Y HORIZONTAL */}
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-nowrap">
+              <div className="flex items-center justify-between sm:justify-start gap-2 flex-nowrap">
                 {trainerMode === "spider_exercise" ? (
                   <>
-                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-baseline gap-2 min-w-0">
+                    <h2 className="text-lg sm:text-2xl font-black tracking-tight text-white flex items-baseline gap-2 min-w-0">
                       <span className="text-[#f25100] shrink-0 font-mono">
                         {selectedSpiderPattern.id}
                       </span>
@@ -1929,7 +1995,7 @@ export default function ScaleDictionary() {
                   </>
                 ) : (
                   <>
-                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-baseline gap-2 min-w-0">
+                    <h2 className="text-lg sm:text-2xl font-black tracking-tight text-white flex items-baseline gap-1.5 sm:gap-2 min-w-0">
                       <span className="text-[#f25100] shrink-0">
                         {selectedRoot}
                       </span>
@@ -1941,7 +2007,7 @@ export default function ScaleDictionary() {
                   </>
                 )}
               </div>
-              <p className="text-xs text-zinc-400 mt-0.5 truncate">
+              <p className="text-[11px] sm:text-xs text-zinc-400 mt-1 leading-snug sm:truncate">
                 {trainerMode === "spider_exercise"
                   ? isEs
                     ? `6ª cuerda (Traste ${currentSpiderWindowBaseFret}): ${spiderExampleNotesOn6thString} · Sube 6ª→1ª y avanza +1 traste bajando 1ª→6ª`
@@ -1952,13 +2018,14 @@ export default function ScaleDictionary() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <div className="flex items-center bg-[#161720] p-1 rounded-xl border border-[#252736] h-9">
+            {/* En móvil vertical se apilan al 100%; en móvil horizontal (sm:) caben los 3 grupos en 1 sola línea ordenada */}
+            <div className="flex flex-col sm:flex-row sm:flex-nowrap items-stretch sm:items-center justify-between xl:justify-end gap-2 shrink-0 w-full xl:w-auto">
+              <div className="grid grid-cols-2 sm:flex sm:items-center bg-[#161720] p-1 rounded-xl border border-[#252736] h-9 w-full sm:w-auto shrink-0">
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setTrainerMode("scale_playalong")}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                  className={`px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center ${
                     trainerMode === "scale_playalong"
                       ? "bg-[#f25100] text-white"
                       : "text-zinc-400 hover:text-white"
@@ -1973,7 +2040,7 @@ export default function ScaleDictionary() {
                     setTrainerMode("spider_exercise");
                     setDotLabelMode("finger");
                   }}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer ${
+                  className={`px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
                     trainerMode === "spider_exercise"
                       ? "bg-[#f25100] text-white"
                       : "text-zinc-400 hover:text-white"
@@ -1984,7 +2051,7 @@ export default function ScaleDictionary() {
                 </button>
               </div>
 
-              <div className="relative h-9 shrink-0">
+              <div className="relative h-9 w-full sm:flex-1 xl:flex-none sm:min-w-[165px]">
                 <Radio
                   size={13}
                   className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#f25100] pointer-events-none"
@@ -2003,7 +2070,7 @@ export default function ScaleDictionary() {
                       handlePlaySingleDot(firstRootDot, newInst);
                     }
                   }}
-                  className="h-9 pl-7 pr-6 rounded-xl bg-[#161720] hover:bg-[#1c1e29] border border-[#282b3d] hover:border-[#f25100]/60 text-[11px] font-extrabold uppercase tracking-wider text-zinc-100 appearance-none cursor-pointer focus:outline-none"
+                  className="w-full h-9 pl-7 pr-6 rounded-xl bg-[#161720] hover:bg-[#1c1e29] border border-[#282b3d] hover:border-[#f25100]/60 text-[10.5px] sm:text-[11px] font-extrabold uppercase tracking-wider text-zinc-100 appearance-none cursor-pointer focus:outline-none truncate"
                 >
                   {GUITAR_INSTRUMENTS.map((inst) => (
                     <option
@@ -2021,12 +2088,12 @@ export default function ScaleDictionary() {
                 />
               </div>
 
-              <div className="flex items-center bg-[#161720] p-1 rounded-xl border border-[#252736] shrink-0 h-9">
+              <div className="grid grid-cols-3 sm:flex sm:items-center bg-[#161720] p-1 rounded-xl border border-[#252736] shrink-0 h-9 w-full sm:w-auto">
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setDotLabelMode("note")}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer ${
+                  className={`px-2 py-1 rounded-lg text-[10.5px] sm:text-[11px] font-extrabold uppercase tracking-wider flex items-center justify-center gap-1 transition-colors cursor-pointer ${
                     dotLabelMode === "note"
                       ? "bg-[#f25100] text-white"
                       : "text-zinc-400 hover:text-white"
@@ -2043,7 +2110,7 @@ export default function ScaleDictionary() {
                     if (!isFullMapActive && trainerMode !== "spider_exercise")
                       setDotLabelMode("degree");
                   }}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-colors ${
+                  className={`px-2 py-1 rounded-lg text-[10.5px] sm:text-[11px] font-extrabold uppercase tracking-wider flex items-center justify-center gap-1 transition-colors ${
                     isFullMapActive || trainerMode === "spider_exercise"
                       ? "text-zinc-600 opacity-40 cursor-not-allowed"
                       : dotLabelMode === "degree"
@@ -2061,7 +2128,7 @@ export default function ScaleDictionary() {
                   onClick={() => {
                     if (!isFullMapActive) setDotLabelMode("finger");
                   }}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-colors ${
+                  className={`px-2 py-1 rounded-lg text-[10.5px] sm:text-[11px] font-extrabold uppercase tracking-wider flex items-center justify-center gap-1 transition-colors ${
                     isFullMapActive
                       ? "text-zinc-600 opacity-40 cursor-not-allowed"
                       : dotLabelMode === "finger"
@@ -2076,26 +2143,27 @@ export default function ScaleDictionary() {
             </div>
           </div>
 
-          {/* 2. FILA DE POSICIONES (O PATRÓN DE DIGITACIÓN SI ESTÁ EN MODO ARAÑA) */}
+          {/* 2. FILA DE POSICIONES (SIN TEXTO TRUNCADO EN MÓVIL ROTADO NI VERTICAL) */}
           {trainerMode === "scale_playalong" ? (
             <div className="bg-[#15161e] border border-[#232634] rounded-xl p-2.5 flex flex-col gap-2">
-              <div className="flex items-center justify-between px-1">
+              <div className="flex items-center justify-between px-1 gap-2">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                  <Layers size={13} className="text-[#f25100]" />
+                  <Layers size={13} className="text-[#f25100] shrink-0" />
                   {isEs
                     ? "POSICIONES EN EL DIAPASÓN:"
                     : "FRETBOARD POSITIONS:"}
                 </span>
-                <span className="text-[11px] font-mono text-zinc-400">
+                <span className="text-[10.5px] sm:text-[11px] font-mono text-zinc-400 shrink-0">
                   {isEs
                     ? `Trastes activos: ${activePositionBox.minFret} al ${activePositionBox.maxFret}`
                     : `Active frets: ${activePositionBox.minFret} to ${activePositionBox.maxFret}`}
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 sm:gap-2">
                 {studioPositions.map((pos) => {
                   const isSelected = selectedPositionId === pos.id;
+                  const isFullMapBtn = pos.id === 0;
                   return (
                     <button
                       key={pos.id}
@@ -2105,7 +2173,9 @@ export default function ScaleDictionary() {
                         e.currentTarget.blur();
                         setSelectedPositionId(pos.id);
                       }}
-                      className={`py-2 px-2.5 rounded-xl border text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer truncate ${
+                      className={`${
+                        isFullMapBtn ? "col-span-2 sm:col-span-1" : "col-span-1"
+                      } py-2 px-1.5 sm:px-2.5 rounded-xl border text-[10px] md:text-xs font-extrabold uppercase tracking-tight sm:tracking-wider transition-colors cursor-pointer whitespace-nowrap text-center ${
                         isSelected
                           ? "bg-[#f25100] text-white border-[#ff7433] shadow-[0_0_12px_rgba(242,81,0,0.35)]"
                           : "bg-[#101117] text-zinc-300 border-[#252736] hover:border-[#f25100]/50 hover:text-white"
@@ -2182,9 +2252,9 @@ export default function ScaleDictionary() {
             </div>
           )}
 
-          {/* 3. BARRA 100% FIJA EN 1 SOLA LÍNEA */}
-          <div className="bg-[#15161e] border border-[#282c3e] rounded-xl px-3 py-2 flex items-center justify-between gap-2 overflow-x-auto">
-            <div className="flex items-center gap-2 shrink-0">
+          {/* 3. BARRA DE TRANSPORTE SIEMPRE VISIBLE AL 100% EN MÓVIL VERTICAL, MÓVIL ROTADO (LANDSCAPE) Y DESKTOP */}
+          <div className="bg-[#15161e] border border-[#282c3e] rounded-xl px-2.5 sm:px-3 py-2 flex flex-wrap xl:flex-nowrap items-center justify-between gap-2">
+            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-start gap-2 w-full xl:w-auto">
               <div className="flex items-center bg-[#101117] p-1 rounded-xl border border-[#252736] gap-1 shrink-0">
                 {([1, 2, 3, 4] as SubdivisionId[]).map((subId) => {
                   const isSubActive = subdivision === subId;
@@ -2209,7 +2279,7 @@ export default function ScaleDictionary() {
                       onMouseDown={(e) => e.preventDefault()}
                       title={tooltipMap[subId]}
                       onClick={() => setSubdivision(subId)}
-                      className={`w-9 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer ${
+                      className={`w-8 sm:w-9 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer ${
                         isSubActive
                           ? "bg-[#f25100] text-white shadow-[0_0_10px_rgba(242,81,0,0.4)]"
                           : "text-zinc-400 hover:text-white hover:bg-[#181a24]"
@@ -2230,7 +2300,7 @@ export default function ScaleDictionary() {
                     ? "Metrónomo (Incluye 1 compás de cuenta previa al iniciar)"
                     : "Metronome (Includes 1-bar count-in on start)"
                 }
-                className={`h-9 px-3 rounded-xl border flex items-center gap-2 transition-colors cursor-pointer shrink-0 ${
+                className={`h-9 px-2.5 sm:px-3 rounded-xl border flex items-center gap-2 transition-colors cursor-pointer shrink-0 ${
                   metronomeEnabled
                     ? "bg-[#1a1412] text-[#ff8547] border-[#f25100]/50"
                     : "bg-[#101117] text-zinc-500 border-[#252736]"
@@ -2253,7 +2323,7 @@ export default function ScaleDictionary() {
                 </div>
               </button>
 
-              <div className="flex items-center gap-1.5 bg-[#101117] px-2.5 rounded-xl border border-[#252736] h-9 shrink-0">
+              <div className="flex items-center justify-between sm:justify-start gap-1.5 bg-[#101117] px-2.5 rounded-xl border border-[#252736] h-9 w-full sm:flex-1 xl:flex-none shrink-0">
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
@@ -2272,7 +2342,7 @@ export default function ScaleDictionary() {
                     e.currentTarget.blur();
                     setBpm(Number(e.target.value));
                   }}
-                  className="w-20 accent-[#f25100] cursor-pointer"
+                  className="flex-1 xl:w-20 accent-[#f25100] cursor-pointer"
                 />
                 <button
                   type="button"
@@ -2282,13 +2352,13 @@ export default function ScaleDictionary() {
                 >
                   +
                 </button>
-                <span className="text-xs font-mono font-black text-[#f25100] w-[54px] text-right">
+                <span className="text-xs font-mono font-black text-[#f25100] w-[54px] text-right shrink-0">
                   {bpm} BPM
                 </span>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center justify-between sm:justify-end gap-2 w-full xl:w-auto shrink-0">
               <div
                 className="flex items-center bg-[#101117] p-1 rounded-xl border border-[#252736] h-9 shrink-0"
                 title={
@@ -2334,7 +2404,7 @@ export default function ScaleDictionary() {
                     ? "Iniciar / Detener (Atajo: Barra Espaciadora)"
                     : "Start / Stop (Shortcut: Spacebar)"
                 }
-                className="w-[148px] h-9 px-3 rounded-xl bg-[#f25100] hover:bg-[#ff621a] text-white font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-[0_0_18px_rgba(242,81,0,0.45)] transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                className="flex-1 xl:flex-none xl:w-[148px] h-9 px-3 rounded-xl bg-[#f25100] hover:bg-[#ff621a] text-white font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-[0_0_18px_rgba(242,81,0,0.45)] transition-colors cursor-pointer shrink-0 whitespace-nowrap"
               >
                 {isPlayingSequence ? (
                   <>
@@ -2351,122 +2421,191 @@ export default function ScaleDictionary() {
             </div>
           </div>
 
-          {/* 4. DIAPASÓN INTERACTIVO */}
-          <div className="w-full bg-[#15161e] border border-[#232634] rounded-2xl p-4 sm:p-6 overflow-x-auto">
-            <div className="min-w-[880px] select-none">
-              <div className="relative flex flex-col justify-between py-2">
-                <div
-                  className="grid items-center"
-                  style={{
-                    gridTemplateColumns: gridColsStyle,
-                  }}
-                >
+          {/* 4. DIAPASÓN INTERACTIVO CON AUTO-SCROLL Y COLUMNA FIJA Z-40 */}
+          <div className="w-full bg-[#15161e] border border-[#232634] rounded-2xl p-3 sm:p-6 flex flex-col">
+            <div
+              ref={fretboardScrollRef}
+              className="w-full overflow-x-auto scroll-smooth pb-1"
+            >
+              <div className="min-w-[880px] select-none">
+                <div className="relative flex flex-col justify-between py-2">
                   <div
-                    className="flex flex-col gap-5 relative"
+                    className="grid items-center"
                     style={{
-                      gridColumn: `span ${visibleFrets.length + 1} / span ${
-                        visibleFrets.length + 1
-                      }`,
+                      gridTemplateColumns: gridColsStyle,
                     }}
                   >
                     <div
-                      className="absolute inset-0 grid pointer-events-none"
+                      className="flex flex-col gap-5 relative"
                       style={{
-                        gridTemplateColumns: gridColsStyle,
+                        gridColumn: `span ${visibleFrets.length + 1} / span ${
+                          visibleFrets.length + 1
+                        }`,
                       }}
                     >
                       <div
-                        className={
-                          showOpenStringColumn
-                            ? "border-r border-[#2e3244] h-full"
-                            : "border-r-[4px] border-[#f25100] h-full"
-                        }
-                      />
-
-                      {visibleFrets.map((fret) => {
-                        const isHighlightedFret =
-                          trainerMode === "spider_exercise"
-                            ? fret >= currentSpiderWindowBaseFret &&
-                              fret <= currentSpiderWindowBaseFret + 3
-                            : activePositionBox.id !== 0 &&
-                              fret >= activePositionBox.minFret &&
-                              fret <= activePositionBox.maxFret;
-
-                        return (
-                          <div
-                            key={`fret-line-${fret}`}
-                            className={`${
-                              fret === 0
-                                ? "border-r-[4px] border-[#f25100]"
-                                : "border-r border-[#2e3244]"
-                            } h-full relative flex items-center justify-center transition-colors ${
-                              isHighlightedFret ? "bg-[#f25100]/[0.07]" : ""
-                            }`}
-                          >
-                            {[3, 5, 7, 9, 15, 17].includes(fret) && (
-                              <div className="w-2.5 h-2.5 rounded-full bg-zinc-800/80" />
-                            )}
-                            {fret === 12 && (
-                              <div className="flex flex-col justify-between h-24">
-                                <div className="w-2.5 h-2.5 rounded-full bg-zinc-800/80" />
-                                <div className="w-2.5 h-2.5 rounded-full bg-zinc-800/80" />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {HORIZONTAL_STRINGS.map((str) => (
-                      <div
-                        key={`string-row-${str.stringNumber}`}
-                        className="relative grid items-center h-8"
+                        className="absolute inset-0 grid pointer-events-none"
                         style={{
                           gridTemplateColumns: gridColsStyle,
                         }}
                       >
-                        <div className="relative z-10 pr-2 flex items-center justify-end gap-1">
-                          <span className="text-[10px] font-mono font-bold text-zinc-500">
-                            {str.stringNumber}ª
-                          </span>
-                          <span className="text-xs font-mono font-extrabold text-zinc-300">
-                            {isEs ? str.labelEs : str.labelEn}
-                          </span>
-                        </div>
-
                         <div
-                          className="absolute left-[46px] right-0 bg-zinc-600/75 pointer-events-none"
-                          style={{ height: `${str.thickness}px` }}
+                          className={
+                            showOpenStringColumn
+                              ? "border-r border-[#2e3244] h-full"
+                              : "border-r-[4px] border-[#f25100] h-full"
+                          }
                         />
 
                         {visibleFrets.map((fret) => {
-                          const cellKey = `${str.stringNumber}-${fret}`;
+                          const isHighlightedFret =
+                            trainerMode === "spider_exercise"
+                              ? fret >= currentSpiderWindowBaseFret &&
+                                fret <= currentSpiderWindowBaseFret + 3
+                              : activePositionBox.id !== 0 &&
+                                fret >= activePositionBox.minFret &&
+                                fret <= activePositionBox.maxFret;
 
-                          if (trainerMode === "spider_exercise") {
-                            const spiderCell =
-                              spiderDotsOnFretboard.get(cellKey);
-                            if (!spiderCell) {
+                          return (
+                            <div
+                              key={`fret-line-${fret}`}
+                              className={`${
+                                fret === 0
+                                  ? "border-r-[4px] border-[#f25100]"
+                                  : "border-r border-[#2e3244]"
+                              } h-full relative flex items-center justify-center transition-colors ${
+                                isHighlightedFret ? "bg-[#f25100]/[0.07]" : ""
+                              }`}
+                            >
+                              {[3, 5, 7, 9, 15, 17].includes(fret) && (
+                                <div className="w-2.5 h-2.5 rounded-full bg-zinc-800/80" />
+                              )}
+                              {fret === 12 && (
+                                <div className="flex flex-col justify-between h-24">
+                                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-800/80" />
+                                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-800/80" />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {HORIZONTAL_STRINGS.map((str) => (
+                        <div
+                          key={`string-row-${str.stringNumber}`}
+                          className="relative grid items-center h-8"
+                          style={{
+                            gridTemplateColumns: gridColsStyle,
+                          }}
+                        >
+                          {/* Columna fija de nombres de cuerda (z-40 opaca) */}
+                          <div className="sticky left-0 z-40 bg-[#15161e] pr-2 h-8 flex items-center justify-end gap-1 border-r-2 border-[#f25100] shadow-[4px_0_10px_rgba(21,22,30,0.95)]">
+                            <span className="text-[10px] font-mono font-bold text-zinc-500">
+                              {str.stringNumber}ª
+                            </span>
+                            <span className="text-xs font-mono font-extrabold text-zinc-300">
+                              {isEs ? str.labelEs : str.labelEn}
+                            </span>
+                          </div>
+
+                          <div
+                            className="absolute left-[46px] right-0 bg-zinc-600/75 pointer-events-none"
+                            style={{ height: `${str.thickness}px` }}
+                          />
+
+                          {visibleFrets.map((fret) => {
+                            const cellKey = `${str.stringNumber}-${fret}`;
+
+                            if (trainerMode === "spider_exercise") {
+                              const spiderCell =
+                                spiderDotsOnFretboard.get(cellKey);
+                              if (!spiderCell) {
+                                return (
+                                  <div
+                                    key={`empty-spider-${cellKey}`}
+                                    className="h-8 flex items-center justify-center relative z-10"
+                                  />
+                                );
+                              }
+
+                              const { dot, finger } = spiderCell;
+                              const isPlayingThisExactDot =
+                                activePlayingDotKey === dot.key;
+                              const isCountInTargetDot =
+                                countInFirstDotKey === dot.key;
+                              const isFirstFingerAnchor = finger === "1";
+
+                              const labelText =
+                                dotLabelMode === "note"
+                                  ? isEs
+                                    ? dot.noteLabelEs
+                                    : dot.noteLabelEn
+                                  : finger;
+
                               return (
                                 <div
-                                  key={`empty-spider-${cellKey}`}
+                                  key={dot.key}
+                                  className="h-8 flex items-center justify-center relative z-10"
+                                >
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={(e) => {
+                                      e.currentTarget.blur();
+                                      handlePlaySingleDot(dot);
+                                    }}
+                                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full font-mono text-[11px] font-extrabold flex items-center justify-center transition-transform duration-150 cursor-pointer ${
+                                      isPlayingThisExactDot
+                                        ? "bg-white text-[#090a0d] scale-125 ring-4 ring-[#f25100] shadow-[0_0_20px_#f25100] z-30"
+                                        : isCountInTargetDot
+                                        ? "bg-[#f25100] text-white scale-115 ring-4 ring-white animate-pulse shadow-[0_0_18px_#f25100] z-30"
+                                        : isFirstFingerAnchor
+                                        ? "bg-[#f25100] text-white border-2 border-[#ff8547] shadow-[0_0_12px_rgba(242,81,0,0.5)] z-20"
+                                        : "bg-[#2a2d3a] text-zinc-100 border border-[#45495c] hover:border-[#f25100]"
+                                    }`}
+                                  >
+                                    {labelText}
+                                  </button>
+                                </div>
+                              );
+                            }
+
+                            const dot = allFretboardDots.find(
+                              (d) =>
+                                d.stringNumber === str.stringNumber &&
+                                d.fret === fret
+                            );
+
+                            if (!dot) {
+                              return (
+                                <div
+                                  key={`empty-${str.stringNumber}-${fret}`}
                                   className="h-8 flex items-center justify-center relative z-10"
                                 />
                               );
                             }
 
-                            const { dot, finger } = spiderCell;
+                            const inActivePosition =
+                              activePositionBox.activeDotKeys.has(dot.key);
                             const isPlayingThisExactDot =
                               activePlayingDotKey === dot.key;
                             const isCountInTargetDot =
                               countInFirstDotKey === dot.key;
-                            const isFirstFingerAnchor = finger === "1";
+
+                            const effectiveMode = isFullMapActive
+                              ? "note"
+                              : dotLabelMode;
 
                             const labelText =
-                              dotLabelMode === "note"
+                              effectiveMode === "note"
                                 ? isEs
                                   ? dot.noteLabelEs
                                   : dot.noteLabelEn
-                                : finger;
+                                : effectiveMode === "degree"
+                                ? dot.degreeLabel
+                                : activePositionBox.fingerByDotKey.get(dot.key) ||
+                                  (fret === 0 ? "0" : "1");
 
                             return (
                               <div
@@ -2480,149 +2619,87 @@ export default function ScaleDictionary() {
                                     e.currentTarget.blur();
                                     handlePlaySingleDot(dot);
                                   }}
+                                  title={`${
+                                    isEs ? dot.noteLabelEs : dot.noteLabelEn
+                                  } (${dot.degreeLabel}) - ${
+                                    isEs ? "Cuerda" : "String"
+                                  } ${dot.stringNumber}, ${
+                                    fret === 0
+                                      ? isEs
+                                        ? "Al aire (0)"
+                                        : "Open (0)"
+                                      : `${isEs ? "Traste" : "Fret"} ${fret}`
+                                  }`}
                                   className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full font-mono text-[11px] font-extrabold flex items-center justify-center transition-transform duration-150 cursor-pointer ${
                                     isPlayingThisExactDot
                                       ? "bg-white text-[#090a0d] scale-125 ring-4 ring-[#f25100] shadow-[0_0_20px_#f25100] z-30"
                                       : isCountInTargetDot
                                       ? "bg-[#f25100] text-white scale-115 ring-4 ring-white animate-pulse shadow-[0_0_18px_#f25100] z-30"
-                                      : isFirstFingerAnchor
-                                      ? "bg-[#f25100] text-white border-2 border-[#ff8547] shadow-[0_0_12px_rgba(242,81,0,0.5)] z-20"
-                                      : "bg-[#2a2d3a] text-zinc-100 border border-[#45495c] hover:border-[#f25100]"
+                                      : dot.isRoot
+                                      ? "bg-[#f25100] text-white border-2 border-[#ff8547] shadow-[0_0_12px_rgba(242,81,0,0.65)] z-20"
+                                      : "bg-[#2a2d3a] text-zinc-100 border border-[#45495c] hover:border-[#f25100] hover:text-white"
+                                  } ${
+                                    !inActivePosition &&
+                                    !isPlayingThisExactDot &&
+                                    !isCountInTargetDot
+                                      ? "opacity-15 scale-90"
+                                      : "opacity-100"
                                   }`}
                                 >
                                   {labelText}
                                 </button>
                               </div>
                             );
-                          }
-
-                          const dot = allFretboardDots.find(
-                            (d) =>
-                              d.stringNumber === str.stringNumber &&
-                              d.fret === fret
-                          );
-
-                          if (!dot) {
-                            return (
-                              <div
-                                key={`empty-${str.stringNumber}-${fret}`}
-                                className="h-8 flex items-center justify-center relative z-10"
-                              />
-                            );
-                          }
-
-                          const inActivePosition =
-                            activePositionBox.activeDotKeys.has(dot.key);
-                          const isPlayingThisExactDot =
-                            activePlayingDotKey === dot.key;
-                          const isCountInTargetDot =
-                            countInFirstDotKey === dot.key;
-
-                          const effectiveMode = isFullMapActive
-                            ? "note"
-                            : dotLabelMode;
-
-                          const labelText =
-                            effectiveMode === "note"
-                              ? isEs
-                                ? dot.noteLabelEs
-                                : dot.noteLabelEn
-                              : effectiveMode === "degree"
-                              ? dot.degreeLabel
-                              : activePositionBox.fingerByDotKey.get(dot.key) ||
-                                (fret === 0 ? "0" : "1");
-
-                          return (
-                            <div
-                              key={dot.key}
-                              className="h-8 flex items-center justify-center relative z-10"
-                            >
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={(e) => {
-                                  e.currentTarget.blur();
-                                  handlePlaySingleDot(dot);
-                                }}
-                                title={`${
-                                  isEs ? dot.noteLabelEs : dot.noteLabelEn
-                                } (${dot.degreeLabel}) - ${
-                                  isEs ? "Cuerda" : "String"
-                                } ${dot.stringNumber}, ${
-                                  fret === 0
-                                    ? isEs
-                                      ? "Al aire (0)"
-                                      : "Open (0)"
-                                    : `${isEs ? "Traste" : "Fret"} ${fret}`
-                                }`}
-                                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full font-mono text-[11px] font-extrabold flex items-center justify-center transition-transform duration-150 cursor-pointer ${
-                                  isPlayingThisExactDot
-                                    ? "bg-white text-[#090a0d] scale-125 ring-4 ring-[#f25100] shadow-[0_0_20px_#f25100] z-30"
-                                    : isCountInTargetDot
-                                    ? "bg-[#f25100] text-white scale-115 ring-4 ring-white animate-pulse shadow-[0_0_18px_#f25100] z-30"
-                                    : dot.isRoot
-                                    ? "bg-[#f25100] text-white border-2 border-[#ff8547] shadow-[0_0_12px_rgba(242,81,0,0.65)] z-20"
-                                    : "bg-[#2a2d3a] text-zinc-100 border border-[#45495c] hover:border-[#f25100] hover:text-white"
-                                } ${
-                                  !inActivePosition &&
-                                  !isPlayingThisExactDot &&
-                                  !isCountInTargetDot
-                                    ? "opacity-15 scale-90"
-                                    : "opacity-100"
-                                }`}
-                              >
-                                {labelText}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
+                          })}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
 
-                <div
-                  className="grid pt-4 mt-2 border-t border-[#1f2230] text-center"
-                  style={{
-                    gridTemplateColumns: gridColsStyle,
-                  }}
-                >
-                  <div className="text-[10px] font-mono font-bold text-zinc-500">
-                    TR.
+                  <div
+                    className="grid pt-4 mt-2 border-t border-[#1f2230] text-center"
+                    style={{
+                      gridTemplateColumns: gridColsStyle,
+                    }}
+                  >
+                    <div className="sticky left-0 z-40 bg-[#15161e] text-[10px] font-mono font-bold text-zinc-500 border-r-2 border-transparent shadow-[4px_0_10px_rgba(21,22,30,0.95)]">
+                      TR.
+                    </div>
+                    {visibleFrets.map((fret) => {
+                      const isMarker = FRET_MARKERS.includes(fret);
+                      const inWindow =
+                        trainerMode === "spider_exercise"
+                          ? fret >= currentSpiderWindowBaseFret &&
+                            fret <= currentSpiderWindowBaseFret + 3
+                          : activePositionBox.id !== 0 &&
+                            fret >= activePositionBox.minFret &&
+                            fret <= activePositionBox.maxFret;
+
+                      return (
+                        <div
+                          key={`fret-num-${fret}`}
+                          className={`text-xs font-mono ${
+                            inWindow
+                              ? "font-black text-[#f25100]"
+                              : isMarker
+                              ? "font-black text-zinc-300"
+                              : "font-medium text-zinc-600"
+                          }`}
+                        >
+                          {fret}
+                        </div>
+                      );
+                    })}
                   </div>
-                  {visibleFrets.map((fret) => {
-                    const isMarker = FRET_MARKERS.includes(fret);
-                    const inWindow =
-                      trainerMode === "spider_exercise"
-                        ? fret >= currentSpiderWindowBaseFret &&
-                          fret <= currentSpiderWindowBaseFret + 3
-                        : activePositionBox.id !== 0 &&
-                          fret >= activePositionBox.minFret &&
-                          fret <= activePositionBox.maxFret;
-
-                    return (
-                      <div
-                        key={`fret-num-${fret}`}
-                        className={`text-xs font-mono ${
-                          inWindow
-                            ? "font-black text-[#f25100]"
-                            : isMarker
-                            ? "font-black text-zinc-300"
-                            : "font-medium text-zinc-600"
-                        }`}
-                      >
-                        {fret}
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-2 border-t border-[#1e202b] text-xs text-zinc-400">
-              <div className="flex items-center gap-4">
+            {/* Leyenda fija fuera del área de scroll horizontal */}
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center justify-between gap-2.5 pt-3 mt-2 border-t border-[#1e202b] text-xs text-zinc-400">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                 <span className="flex items-center gap-2 font-bold">
-                  <span className="w-3.5 h-3.5 rounded-full bg-[#f25100] inline-block shadow-[0_0_8px_#f25100]" />
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#f25100] shrink-0 inline-block shadow-[0_0_8px_#f25100]" />
                   {trainerMode === "spider_exercise"
                     ? isEs
                       ? "Dedo 1 (Ancla del bloque de 4 trastes)"
@@ -2632,7 +2709,7 @@ export default function ScaleDictionary() {
                     : "Fundamental (F)"}
                 </span>
                 <span className="flex items-center gap-2 font-bold">
-                  <span className="w-3.5 h-3.5 rounded-full bg-[#2a2d3a] border border-[#45495c] inline-block" />
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#2a2d3a] border border-[#45495c] shrink-0 inline-block" />
                   {trainerMode === "spider_exercise"
                     ? isEs
                       ? "Dedos 2, 3 y 4 del patrón cromático"
@@ -2643,17 +2720,20 @@ export default function ScaleDictionary() {
                 </span>
               </div>
 
-              <span className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
-                <Volume2 size={13} className="text-[#f25100]" />
-                {isEs
-                  ? "Atajo: Presiona [ESPACIO] para Iniciar / Detener (Incluye 1 compás de entrada)"
-                  : "Shortcut: Press [SPACE] to Start / Stop (Includes 1-bar count-in)"}
+              <span className="flex items-center gap-1.5 text-[10.5px] sm:text-[11px] font-mono text-zinc-400 leading-snug">
+                <Volume2 size={13} className="text-[#f25100] shrink-0" />
+                <span>
+                  {isEs
+                    ? "Atajo: Presiona [ESPACIO] para Iniciar / Detener (Incluye 1 compás de entrada)"
+                    : "Shortcut: Press [SPACE] to Start / Stop (Includes 1-bar count-in)"}
+                </span>
               </span>
             </div>
           </div>
         </div>
 
-        <div className="bg-[#111217] p-5 rounded-2xl border border-[#1e202b] shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        {/* 5. PIE DE RELACIÓN ACORDE-ESCALA E INTERVALOS */}
+        <div className="bg-[#111217] p-4 sm:p-5 rounded-2xl border border-[#1e202b] shadow-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
           <div className="flex flex-col gap-2">
             <span className="text-xs font-extrabold uppercase tracking-wider text-zinc-300 flex items-center gap-2">
               <BookOpen size={14} className="text-[#f25100]" />
@@ -2678,7 +2758,7 @@ export default function ScaleDictionary() {
             </div>
           </div>
 
-          <div className="bg-[#161720] border border-[#252736] rounded-xl px-4 py-3 shrink-0 flex flex-col items-start sm:items-end">
+          <div className="w-full sm:w-auto bg-[#161720] border border-[#252736] rounded-xl px-4 py-3 shrink-0 flex flex-col items-start sm:items-end">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
               <GitCommit size={13} className="text-[#f25100]" />
               {isEs ? "ESTRUCTURA DE INTERVALOS" : "INTERVAL STRUCTURE"}

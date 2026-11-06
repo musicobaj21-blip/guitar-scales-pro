@@ -55,8 +55,6 @@ function getScaleFretboardCoordinates(
 
   for (let i = 0; i < scaleOffsets.length; i++) {
     const offset = scaleOffsets[i];
-    // Lógica de frontera (Si/B a Do/C): si el índice cromático de la nota actual es menor
-    // que el de la anterior, cruzamos la frontera de octava y sumamos +1 a la octava actual
     if (i > 0 && offset < prevOffset) {
       currentOctave++;
     }
@@ -91,7 +89,6 @@ function getScaleFretboardCoordinates(
           score -= Math.abs(f - baseFret) * 15;
         }
 
-        // Favorecer avanzar en la misma cuerda o pasar a la cuerda inmediatamente más aguda
         if (s === lastStringIdx && f > lastFretIdx) {
           score += 60;
         } else if (s === lastStringIdx - 1) {
@@ -102,7 +99,6 @@ function getScaleFretboardCoordinates(
           score -= 100;
         }
 
-        // Penalizar estiramiento lejos de baseFret
         score -= Math.abs(f - baseFret) * 15;
 
         candidates.push({ stringIdx: s, fretIdx: f, score });
@@ -155,7 +151,6 @@ interface ScaleFretboardProps {
   isExpanded?: boolean;
 }
 
-// Convert MIDI number to note name
 function getNoteNameForMidi(midi: number): string {
   const scale = [
     "C",
@@ -174,14 +169,12 @@ function getNoteNameForMidi(midi: number): string {
   return scale[midi % 12];
 }
 
-// Convert MIDI number to note name with scientific octave (e.g. 48 -> "C3", 60 -> "C4")
 function getNoteNameWithOctave(midi: number): string {
   const noteName = getNoteNameForMidi(midi);
   const octave = Math.floor(midi / 12) - 1;
   return `${noteName}${octave}`;
 }
 
-// Parse note with octave string to MIDI (e.g. "C3" -> 48, "C4" -> 60)
 function parseNoteToMidi(noteStr: string): number | null {
   const match = noteStr.trim().match(/^([A-G][#b]?)(-?\d+)$/);
   if (!match) return null;
@@ -235,6 +228,7 @@ export default function ScaleFretboard({
   const { instrument } = useInstrument();
   const { t, translateNote } = useLanguage();
   const isPlayingRef = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeCoordinate, setActiveCoordinate] = useState<{ stringIdx: number; fretIdx: number } | null>(null);
   const [activeSequenceIndex, setActiveSequenceIndex] = useState<number | null>(null);
@@ -262,10 +256,7 @@ export default function ScaleFretboard({
     stopPlayback();
   }, [scaleName, root]);
 
-  // Normalize note arrays for comparison (remove flat/sharp differences mathematically)
-  // But since both use our music utils, we can just compare the midi offset
   const getNoteOffset = (note: string) => {
-    // Basic mapping for scale notes
     const map: Record<string, number> = {
       C: 0,
       "C#": 1,
@@ -291,7 +282,6 @@ export default function ScaleFretboard({
   const scaleOffsets = notes.map(getNoteOffset);
   const rootOffset = getNoteOffset(root);
 
-  // 15 frets (0 to 14) with generous vertical & horizontal spacing so note circles never overlap
   const numFrets = 15;
   const stringSpacing = isExpanded ? 44 : 36;
   const fretSpacing = isExpanded ? 54 : 46;
@@ -299,12 +289,46 @@ export default function ScaleFretboard({
   const width = numFrets * fretSpacing + 36;
   const height = 5 * stringSpacing + 64;
 
-  // Arreglo de coordenadas exactas para la escala en orden ascendente
   const scaleCoordinates = useMemo(() => {
     return getScaleFretboardCoordinates(rootOffset, scaleOffsets, numFrets);
   }, [rootOffset, scaleOffsets, numFrets]);
 
-  // Secuenciador sincronizado basado en coordenadas exactas de cuerda y traste
+  // Auto-enfoque horizontal en móvil: centra inmediatamente los trastes activos cuando cambia la posición/escala
+  useEffect(() => {
+    if (typeof window === "undefined" || window.innerWidth >= 768) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const targetCoords =
+      isolatedShape && isolatedShape.length > 0 ? isolatedShape : scaleCoordinates;
+    const activeFrets = targetCoords.map((c) => c.fretIdx).filter((f) => f > 0);
+    if (activeFrets.length === 0) return;
+
+    const minFret = Math.min(...activeFrets);
+    const maxFret = Math.max(...activeFrets);
+
+    if (minFret <= 2 && maxFret <= 5) {
+      container.scrollTo({ left: 0, behavior: "smooth" });
+      return;
+    }
+
+    const totalScrollableWidth = container.scrollWidth;
+    const clientW = container.clientWidth;
+    if (totalScrollableWidth <= clientW) return;
+
+    const centerFret = (minFret + maxFret) / 2;
+    const centerRatio = centerFret / numFrets;
+    const targetScrollLeft = Math.max(
+      0,
+      Math.min(
+        totalScrollableWidth - clientW,
+        centerRatio * totalScrollableWidth - clientW / 2
+      )
+    );
+
+    container.scrollTo({ left: targetScrollLeft, behavior: "smooth" });
+  }, [isolatedShape, scaleCoordinates, root, scaleName, numFrets]);
+
   const playScale = async () => {
     if (isPlayingRef.current) return;
     isPlayingRef.current = true;
@@ -323,7 +347,6 @@ export default function ScaleFretboard({
       if (!isPlayingRef.current) break;
       const coord = coordinates[i];
 
-      // Apagado inmediato de la posición anterior y encendido exclusivo de las coordenadas actuales
       setActiveCoordinate({ stringIdx: coord.stringIdx, fretIdx: coord.fretIdx });
       setActiveSequenceIndex(i);
       setActiveScaleIndex(i);
@@ -335,7 +358,6 @@ export default function ScaleFretboard({
       await new Promise((r) => setTimeout(r, 400));
     }
 
-    // Apagado inmediato de todas las luces al finalizar
     stopPlayback();
   };
 
@@ -351,11 +373,9 @@ export default function ScaleFretboard({
     dictionaryAudio.playSingleNote(freq, 'guitar');
   };
 
-  // 1. Extracción Dinámica de la Raíz DIRECTAMENTE del string original del acorde
   const rawRootMatch = chordString ? chordString.trim().match(/^([A-G][#b]?)/) : null;
   const originalChordRoot = rawRootMatch ? rawRootMatch[1] : null;
 
-  // 2. Sincronización Enarmónica: Si el acorde tiene bemol (b), usar bemol; si tiene (#), usar sostenido
   let effectiveRoot = root;
   if (originalChordRoot) {
     if (originalChordRoot.includes('b')) {
@@ -373,11 +393,8 @@ export default function ScaleFretboard({
     }
   }
 
-  // 3. Eliminar Conversión por Defecto a sostenidos en el título
   const modeName = scaleName.replace(/^[A-G][#b]?\s+/, '');
-  const effectiveScaleName = modeName !== scaleName ? `${effectiveRoot} ${modeName}` : scaleName;
 
-  // Coordenada efectiva activa (del secuenciador interno o de props externas)
   const effectiveCoordinate = activeCoordinate ?? (
     (playingIndex !== null && playingIndex !== undefined && scaleCoordinates[playingIndex])
       ? { stringIdx: scaleCoordinates[playingIndex].stringIdx, fretIdx: scaleCoordinates[playingIndex].fretIdx }
@@ -386,15 +403,11 @@ export default function ScaleFretboard({
         : null
   );
 
-  // Comparación Estricta de Nota Activa (Coordenada física exacta o Nota + Octava estricta):
-  // Asegura que SOLO se encienda un único punto en todo el diapasón por cada paso de la secuencia.
   const isNoteActive = (scaleIndex: number, noteOffset: number, noteMidi: number, stringIdx: number, fretIdx: number) => {
-    // 1. Si hay coordenadas físicas activas (del secuenciador playScale o de playingIndex), la comprobación es 100% estricta por cuerda y traste:
     if (effectiveCoordinate !== null) {
       return effectiveCoordinate.stringIdx === stringIdx && effectiveCoordinate.fretIdx === fretIdx;
     }
 
-    // 2. Si hay un índice de secuencia/escala activo, resolver su coordenada física única en la escala:
     const effectiveIndex = activeSequenceIndex ?? activeScaleIndex ?? playingIndex ?? activeStepIndex;
     if (effectiveIndex !== null && effectiveIndex !== undefined) {
       const targetCoord = isolatedShape ? isolatedShape[effectiveIndex] : scaleCoordinates[effectiveIndex];
@@ -403,7 +416,6 @@ export default function ScaleFretboard({
       }
     }
 
-    // 3. Si se recibe un activeNote o playingNote externo (ej. emitido por Tone.js como "C3" o MIDI exacto):
     const externalActive = playingNote ?? activeNote;
     if (externalActive !== null && externalActive !== undefined) {
       if (typeof externalActive === "number") {
@@ -428,7 +440,6 @@ export default function ScaleFretboard({
           return true;
         }
 
-        // Comparación estricta NOTA + OCTAVA (ej. "C3" === "C3")
         if (externalActive.match(/[0-9]$/)) {
           if (stdNoteWithOctave.toLowerCase() !== externalActive.trim().toLowerCase()) {
             return false;
@@ -444,7 +455,6 @@ export default function ScaleFretboard({
       }
     }
 
-    // 4. Props externas de arreglo de notas activas
     if (playingNotes && playingNotes.length > 0) {
       return playingNotes.includes(noteMidi);
     }
@@ -469,17 +479,17 @@ export default function ScaleFretboard({
   };
 
   return (
-    <div className="w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-4 sm:p-5 shadow-none relative overflow-visible flex flex-col mt-1">
-      {/* Encabezado Apilado Verticalmente: 1. Título y Subtítulo al 100%, 2. Botón TOCAR a ancho completo */}
+    <div className="w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-3 sm:p-5 shadow-none relative overflow-visible flex flex-col mt-1">
+      {/* Encabezado Apilado Verticalmente */}
       <div className="flex flex-col gap-2.5 mb-3.5 w-full overflow-visible">
         <div className="w-full min-w-0 overflow-visible">
-          <h3 className={`${isExpanded ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'} font-bold text-neutral-100 tracking-tight flex items-baseline flex-wrap gap-1.5 w-full overflow-visible whitespace-normal break-words`}>
+          <h3 className={`${isExpanded ? 'text-xl sm:text-3xl' : 'text-lg sm:text-2xl'} font-bold text-neutral-100 tracking-tight flex items-baseline flex-wrap gap-1.5 w-full overflow-visible whitespace-normal break-words`}>
             {isolatedShape && !scaleName ? (
               notes.map(translateNote).join(" y ")
             ) : (
               <>
                 <span className="text-orange-400 font-extrabold">{translateNote(effectiveRoot)}</span>{" "}
-                <span className={`${isExpanded ? 'text-xl sm:text-2xl' : 'text-lg sm:text-xl'} font-mono text-neutral-200`}>{modeName}</span>
+                <span className={`${isExpanded ? 'text-lg sm:text-2xl' : 'text-base sm:text-xl'} font-mono text-neutral-200`}>{modeName}</span>
               </>
             )}
           </h3>
@@ -498,9 +508,12 @@ export default function ScaleFretboard({
         </button>
       </div>
 
-      {/* Diagrama Diapasón (Horizontal) */}
-      <div className="w-full overflow-x-auto pb-1 mt-1 custom-scrollbar">
-        <div className={`w-full h-auto ${isExpanded ? 'min-w-[780px] min-h-[320px] sm:min-h-[350px] p-4' : 'min-w-[660px] min-h-[250px] sm:min-h-[270px] p-3.5'} relative bg-neutral-950/70 rounded-xl flex justify-center items-center border border-neutral-800`}>
+      {/* Diagrama Diapasón (Horizontal con Auto-Enfoque en Móvil) */}
+      <div
+        ref={scrollContainerRef}
+        className="w-full overflow-x-auto pb-1 mt-1 custom-scrollbar scroll-smooth"
+      >
+        <div className={`w-full h-auto ${isExpanded ? 'min-w-[780px] min-h-[300px] sm:min-h-[350px] p-3 sm:p-4' : 'min-w-[660px] min-h-[240px] sm:min-h-[270px] p-3 sm:p-3.5'} relative bg-neutral-950/70 rounded-xl flex justify-center items-center border border-neutral-800`}>
           <svg
             width="100%"
             height={height}
@@ -541,7 +554,6 @@ export default function ScaleFretboard({
               .slice()
               .reverse()
               .map((_, i) => {
-                // i=0 is High E, i=5 is Low E
                 const y = i * stringSpacing + 16;
                 const stringThickness = 1 + i * 0.35;
                 return (
@@ -560,7 +572,6 @@ export default function ScaleFretboard({
             {/* Draw Notes */}
             {isolatedShape
               ? isolatedShape.map((point, i) => {
-                  // Omitir cuerdas al aire (traste 0)
                   if (point.fretIdx === 0) return null;
 
                   const x =
@@ -621,10 +632,8 @@ export default function ScaleFretboard({
                   .slice()
                   .reverse()
                   .map((baseMidi, stringIdx) => {
-                    // stringIdx 0 = High e... 5 = Low E
                     return Array.from({ length: numFrets + 1 }).map(
                       (_, fretIdx) => {
-                        // Omitir traste 0 (cuerdas al aire / cejuela) para mostrar marcadores únicamente desde el traste 1 en adelante
                         if (fretIdx === 0) return null;
 
                         const midi = baseMidi + fretIdx;
@@ -653,7 +662,6 @@ export default function ScaleFretboard({
                             if (intervalValue === 11) label = "7";
                           }
 
-                          // Comprobación de estado activo en tiempo real: exactamente un único punto activo por paso
                           const isPlayingThisNote = isNoteActive(scaleIndex, offset, midi, stringIdx, fretIdx);
 
                           return (
